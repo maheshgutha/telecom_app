@@ -1,0 +1,19 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.lock
+
+# Android
+android/.gradle/
+android/local.properties
+local.properties
+.gradle/
+
+# iOS
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# Dependencies
+pubspec.lock
