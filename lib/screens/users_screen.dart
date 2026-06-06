@@ -23,7 +23,7 @@ class _UsersScreenState extends State<UsersScreen> {
     final auth = context.read<AuthService>();
     final api = context.read<ApiService>();
     final data = await api.getUsers(auth);
-    setState(() { _users = (data['users'] as List? ?? []).map((u) => User.fromJson(u)).toList(); _loading = false; });
+    setState(() { _users = (data['users'] as List? ?? []).map((u) => User.fromJson(Map<String, dynamic>.from(u))).toList(); _loading = false; });
   }
 
   Future<void> _showAddModal() async {

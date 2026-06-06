@@ -207,13 +207,15 @@ class FollowUp {
     );
   }
 
-  bool get isOverdue => scheduledAt.isBefore(DateTime.now()) && status == 'pending';
+  bool get isOverdue => scheduledAt.isBefore(DateTime.now()) && (status == 'upcoming' || status == 'pending');
   bool get isToday {
     final now = DateTime.now();
     return scheduledAt.year == now.year &&
            scheduledAt.month == now.month &&
            scheduledAt.day == now.day;
   }
+
+  bool get isPending => status == 'upcoming' || status == 'pending';
 
   Color get priorityColor {
     switch (priority?.toLowerCase()) {
@@ -231,25 +233,51 @@ class Campaign {
   final String? description;
   final String? priority;
   final int totalLeads;
-  final double progress;
+  final int called;
+  final int won;
   final DateTime? createdAt;
   final List<String> assignedCallerNames;
 
   Campaign({
     required this.id, required this.name, this.description,
-    this.priority, required this.totalLeads, required this.progress,
+    this.priority, required this.totalLeads,
+    this.called = 0, this.won = 0,
     this.createdAt, this.assignedCallerNames = const [],
   });
 
+  // Single source of truth: calculated from real lead counts
+  double get progress => totalLeads > 0 ? called / totalLeads : 0;
+  int get conversionPct => totalLeads > 0 ? (won / totalLeads * 100).toInt() : 0;
+
   factory Campaign.fromJson(Map<String, dynamic> j) {
     final callers = j['assignedCallers'] as List? ?? [];
+    // Compute called/won from statusBreakdown if available (from /api/campaigns)
+    final statusBreakdown = j['statusBreakdown'] as List? ?? [];
+    int called = 0, won = 0, total = 0;
+    if (statusBreakdown.isNotEmpty) {
+      for (final s in statusBreakdown) {
+        final cnt = (s['count'] as num?)?.toInt() ?? 0;
+        total += cnt;
+        if (s['_id'] != 'Fresh') called += cnt;
+        if (s['_id'] == 'Won') won += cnt;
+      }
+    } else {
+      // Fallback to direct fields
+      final stats = j['stats'] as Map? ?? {};
+      final rawCalled = j['called'] ?? j['calledCount'] ?? stats['called'] ?? j['contactedCount'] ?? 0;
+      final rawWon = j['won'] ?? j['wonCount'] ?? stats['won'] ?? 0;
+      called = (rawCalled as num).toInt();
+      won = (rawWon as num).toInt();
+      total = j['totalLeads'] ?? 0;
+    }
     return Campaign(
       id: j['_id'] ?? '',
       name: j['name'] ?? '',
       description: j['description'],
       priority: j['priority'],
-      totalLeads: j['totalLeads'] ?? 0,
-      progress: (j['progress'] as num?)?.toDouble() ?? 0,
+      totalLeads: j['totalLeads'] ?? total,
+      called: called,
+      won: won,
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt']) : null,
       assignedCallerNames: callers.map((c) => c is Map ? (c['name'] as String? ?? '') : c.toString()).toList(),
     );

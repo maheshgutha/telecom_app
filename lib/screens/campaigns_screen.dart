@@ -26,8 +26,11 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
     final auth = context.read<AuthService>();
     final api = context.read<ApiService>();
     final data = await api.getCampaigns(auth);
+    // /api/campaigns returns statusBreakdown per campaign - Campaign.fromJson reads it
     setState(() {
-      _campaigns = (data['campaigns'] as List? ?? []).map((e) => Campaign.fromJson(e)).toList();
+      _campaigns = (data['campaigns'] as List? ?? [])
+          .map((e) => Campaign.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
       _loading = false;
     });
   }
@@ -48,9 +51,7 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
       ],
     ));
     if (ok == true && nameCtrl.text.isNotEmpty) {
-      final auth = context.read<AuthService>();
-      final api = context.read<ApiService>();
-      await api.createCampaign(auth, {'name': nameCtrl.text, 'description': descCtrl.text});
+      await context.read<ApiService>().createCampaign(context.read<AuthService>(), {'name': nameCtrl.text, 'description': descCtrl.text});
       _load();
     }
   }
@@ -72,25 +73,28 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator())
           : filtered.isEmpty ? const Center(child: Text('No campaigns found', style: TextStyle(color: Colors.grey)))
           : RefreshIndicator(onRefresh: _load, child: ListView.builder(
-            padding: const EdgeInsets.all(14),
-            itemCount: filtered.length,
-            itemBuilder: (_, i) => _CampaignCard(campaign: filtered[i], onTap: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => CampaignDetailScreen(campaignId: filtered[i].id, campaignName: filtered[i].name)))
-                .then((_) => _load())),
-          ))),
+              padding: const EdgeInsets.all(14), itemCount: filtered.length,
+              itemBuilder: (_, i) => _CampaignCard(
+                campaign: filtered[i],
+                onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => CampaignDetailScreen(campaignId: filtered[i].id, campaignName: filtered[i].name)))
+                    .then((_) => _load()),
+              )))),
       ]),
     );
   }
 }
 
 class _CampaignCard extends StatelessWidget {
-  final Campaign campaign;
-  final VoidCallback onTap;
+  final Campaign campaign; final VoidCallback onTap;
   const _CampaignCard({required this.campaign, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final pct = (campaign.progress / 100).clamp(0.0, 1.0);
+    // All values come from Campaign.progress which is calculated from statusBreakdown
+    final calledPct = campaign.progress; // = called/totalLeads
+    final convPct = campaign.conversionPct;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
@@ -98,10 +102,11 @@ class _CampaignCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text('@${campaign.name}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kPurple))),
-            if (campaign.priority != null) Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            if (campaign.priority != null) Container(
+                margin: const EdgeInsets.only(right: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(color: campaign.priorityColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
                 child: Text(campaign.priority!.toUpperCase(), style: TextStyle(color: campaign.priorityColor, fontSize: 10, fontWeight: FontWeight.bold))),
-            const SizedBox(width: 6),
             const Icon(Icons.chevron_right_rounded, color: Colors.grey),
           ]),
           if (campaign.description != null && campaign.description!.isNotEmpty) ...[
@@ -110,27 +115,51 @@ class _CampaignCard extends StatelessWidget {
           ],
           const SizedBox(height: 10),
           Row(children: [
-            Text('${campaign.totalLeads} leads', style: const TextStyle(fontWeight: FontWeight.bold, color: kTextMain, fontSize: 13)),
-            const Spacer(),
-            if (campaign.assignedCallerNames.isNotEmpty)
-              Text('Callers: ${campaign.assignedCallerNames.take(2).join(', ')}', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+            _Pill('${campaign.totalLeads} leads', kPurple),
+            const SizedBox(width: 8),
+            _Pill('${campaign.called} called', kAmber),
+            const SizedBox(width: 8),
+            _Pill('${campaign.won} won', kGreen),
           ]),
           const SizedBox(height: 10),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              const Text('Progress', style: TextStyle(fontSize: 11, color: Colors.grey)),
-              Text('${campaign.progress.toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: kPurple)),
-            ]),
-            const SizedBox(height: 4),
-            ClipRRect(borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(value: pct, minHeight: 7, backgroundColor: Colors.grey.shade100, valueColor: const AlwaysStoppedAnimation<Color>(kPurple))),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Progress', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            Text('${(calledPct * 100).toInt()}% called', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: kPurple)),
           ]),
-          if (campaign.createdAt != null) ...[
-            const SizedBox(height: 8),
-            Text('Created ${DateFormat('dd MMM yyyy').format(campaign.createdAt!)}', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-          ],
+          const SizedBox(height: 4),
+          ClipRRect(borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(value: calledPct.clamp(0.0, 1.0), minHeight: 7,
+                  backgroundColor: Colors.grey.shade100, valueColor: const AlwaysStoppedAnimation<Color>(kPurple))),
+          const SizedBox(height: 6),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Conversion', style: TextStyle(fontSize: 11, color: Colors.grey)),
+            Text('$convPct% won', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: kGreen)),
+          ]),
+          const SizedBox(height: 4),
+          ClipRRect(borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(value: campaign.totalLeads > 0 ? (campaign.won / campaign.totalLeads).clamp(0.0, 1.0) : 0, minHeight: 7,
+                  backgroundColor: Colors.grey.shade100, valueColor: const AlwaysStoppedAnimation<Color>(kGreen))),
+          const SizedBox(height: 8),
+          Row(children: [
+            if (campaign.assignedCallerNames.isNotEmpty) Expanded(
+              child: Text('👥 ${campaign.assignedCallerNames.take(2).join(', ')}${campaign.assignedCallerNames.length > 2 ? ' +${campaign.assignedCallerNames.length - 2}' : ''}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11), overflow: TextOverflow.ellipsis)),
+            if (campaign.createdAt != null)
+              Text(DateFormat('dd MMM yyyy').format(campaign.createdAt!), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ]),
         ]),
       ),
     );
   }
+}
+
+class _Pill extends StatelessWidget {
+  final String label; final Color color;
+  const _Pill(this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(color: color.withOpacity(0.08), borderRadius: BorderRadius.circular(20)),
+    child: Text(label, style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+  );
 }

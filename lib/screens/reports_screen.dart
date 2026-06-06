@@ -18,6 +18,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
   Map<String, dynamic>? _adminData;
   bool _loading = true;
   String _period = 'today';
+  int _overdueCount = 0;
 
   @override
   void initState() { super.initState(); _tabs = TabController(length: 2, vsync: this); _load(); }
@@ -31,10 +32,15 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     final results = await Future.wait([
       api.getLeaderboard(auth, period: _period),
       if (auth.user?.isAdmin == true) api.getAdminAnalysis(auth) else Future.value(<String, dynamic>{}),
+      api.getOverdueFollowUps(auth),
     ]);
     setState(() {
       _leaderboard = results[0];
-      if (auth.user?.isAdmin == true && results.length > 1) _adminData = results[1];
+      if (auth.user?.isAdmin == true && results.length > 2) {
+        if ((results[1] as Map)['error'] == null) _adminData = results[1];
+      }
+      // Use SAME overdue count as dashboard
+      _overdueCount = ((results.last as Map)['followups'] as List? ?? []).length;
       _loading = false;
     });
   }
@@ -43,6 +49,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthService>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reports & Analytics'),
@@ -56,6 +63,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
               const PopupMenuItem(value: 'today', child: Text('Today')),
               const PopupMenuItem(value: 'week', child: Text('This Week')),
               const PopupMenuItem(value: 'month', child: Text('This Month')),
+              const PopupMenuItem(value: 'all', child: Text('All Time')),
             ],
           ),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
@@ -63,10 +71,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       ),
       body: _loading ? const Center(child: CircularProgressIndicator())
         : TabBarView(controller: _tabs, children: [
-          // ── Leaderboard Tab
-          _LeaderboardTab(data: _leaderboard),
-          // ── Analytics Tab
-          _AnalyticsTab(data: _adminData, colors: _colors),
+          _LeaderboardTab(data: _leaderboard, period: _period),
+          _AnalyticsTab(data: _adminData, colors: _colors, overdueCount: _overdueCount),
         ]),
     );
   }
@@ -74,47 +80,64 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
 
 class _LeaderboardTab extends StatelessWidget {
   final Map<String, dynamic>? data;
-  const _LeaderboardTab({this.data});
+  final String period;
+  const _LeaderboardTab({this.data, required this.period});
 
   @override
   Widget build(BuildContext context) {
-    final callers = data?['leaderboard'] as List? ?? [];
-    if (callers.isEmpty) return const Center(child: Text('No leaderboard data yet.', style: TextStyle(color: Colors.grey)));
+    // Handle different API response shapes
+    final rawLeaderboard = data?['leaderboard'] ?? data?['callers'] ?? data?['data'] ?? [];
+    final callers = rawLeaderboard as List? ?? [];
+
+    if (callers.isEmpty) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.leaderboard_rounded, size: 56, color: Colors.grey),
+        const SizedBox(height: 12),
+        Text('No data for "$period"', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        const SizedBox(height: 8),
+        const Text('Try selecting a different time period', style: TextStyle(color: Colors.grey, fontSize: 12)),
+      ]));
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.all(14),
       itemCount: callers.length,
       itemBuilder: (_, i) {
         final c = callers[i] as Map;
+        // Handle different field names from API
         final user = c['user'] as Map? ?? {};
         final rank = i + 1;
         final medal = rank == 1 ? '🥇' : rank == 2 ? '🥈' : rank == 3 ? '🥉' : '#$rank';
-        final calls = c['totalCalls'] ?? 0;
-        final wins = c['sales'] ?? 0;
+        final calls = c['totalCalls'] ?? c['calls'] ?? c['callCount'] ?? 0;
+        final wins = c['sales'] ?? c['won'] ?? c['wins'] ?? 0;
+        final duration = c['totalDuration'] ?? c['duration'] ?? 0;
         final userId = user['_id'] as String?;
+        final minutes = (duration as int) ~/ 60;
 
         return GestureDetector(
           onTap: userId != null ? () => Navigator.push(context, MaterialPageRoute(
               builder: (_) => CallerAnalysisScreen(userId: userId, userName: user['name'] ?? ''))) : null,
           child: Container(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: rank == 1 ? const Color(0xFFFFFBEB) : Colors.white,
+              color: rank == 1 ? const Color(0xFFFFFBEB) : rank == 2 ? const Color(0xFFF8F8FF) : Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: rank == 1 ? kAmber : kBorder),
+              border: Border.all(color: rank == 1 ? kAmber : rank == 2 ? Colors.grey.shade300 : kBorder),
             ),
             child: Row(children: [
-              Text(medal, style: const TextStyle(fontSize: 20)),
+              Text(medal, style: const TextStyle(fontSize: 22)),
               const SizedBox(width: 12),
               CircleAvatar(backgroundColor: kPurpleLight,
                   child: Text((user['name'] as String? ?? 'U').substring(0, 1).toUpperCase(),
                       style: const TextStyle(color: kPurple, fontWeight: FontWeight.bold))),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(user['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
+                Text(user['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: kTextMain)),
                 Text(user['email'] ?? '', style: const TextStyle(color: Colors.grey, fontSize: 11), overflow: TextOverflow.ellipsis),
               ])),
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('$calls calls', style: const TextStyle(fontWeight: FontWeight.bold, color: kPurple, fontSize: 14)),
-                Text('$wins wins 🏆', style: const TextStyle(color: kGreen, fontSize: 12, fontWeight: FontWeight.w600)),
+                Text('$calls calls', style: const TextStyle(fontWeight: FontWeight.bold, color: kPurple, fontSize: 13)),
+                if (wins > 0) Text('$wins won 🏆', style: const TextStyle(color: kGreen, fontSize: 11, fontWeight: FontWeight.w600)),
+                if (minutes > 0) Text('${minutes}m talk', style: const TextStyle(color: Colors.grey, fontSize: 10)),
               ]),
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 18),
@@ -129,31 +152,35 @@ class _LeaderboardTab extends StatelessWidget {
 class _AnalyticsTab extends StatelessWidget {
   final Map<String, dynamic>? data;
   final List<Color> colors;
-  const _AnalyticsTab({this.data, required this.colors});
+  final int overdueCount;
+  const _AnalyticsTab({this.data, required this.colors, required this.overdueCount});
 
   @override
   Widget build(BuildContext context) {
     if (data == null) return const Center(child: Text('Analytics available for admins only.', style: TextStyle(color: Colors.grey)));
+
     final dailyVol = data!['dailyVolume'] as List? ?? [];
     final outcomes = data!['outcomes'] as List? ?? [];
     final callers = data!['teamStatus'] as List? ?? [];
     final totalCalls = callers.fold<int>(0, (s, c) => s + ((c['callsToday'] as int?) ?? 0));
+    final unassigned = data!['unassignedCount'] ?? 0;
 
     return SingleChildScrollView(padding: const EdgeInsets.all(14), child: Column(children: [
+      // Summary cards - consistent with dashboard
       Row(children: [
         Expanded(child: _MiniCard('Team Calls Today', '$totalCalls', kPurple)),
         const SizedBox(width: 10),
-        Expanded(child: _MiniCard('Unassigned Leads', '${data!['unassignedCount'] ?? 0}', kRed)),
+        Expanded(child: _MiniCard('Unassigned', '$unassigned', kAmber)),
         const SizedBox(width: 10),
-        Expanded(child: _MiniCard('Overdue F/U', '${data!['overdueFollowupsCount'] ?? 0}', kAmber)),
+        Expanded(child: _MiniCard('Overdue F/U', '$overdueCount', kRed)),
       ]),
       const SizedBox(height: 14),
 
-      // Caller performance (clickable)
+      // Caller performance
       if (callers.isNotEmpty) Container(padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: kBorder)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Caller Performance (tap for details)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)),
+          const Text('Caller Performance (tap for analysis)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)),
           const SizedBox(height: 12),
           ...callers.map((c) {
             final u = c['user'] as Map? ?? {};
@@ -170,9 +197,11 @@ class _AnalyticsTab extends StatelessWidget {
                       child: Text((u['name'] as String? ?? 'U').substring(0, 1).toUpperCase(),
                           style: const TextStyle(color: kPurple, fontWeight: FontWeight.bold, fontSize: 11))),
                   const SizedBox(width: 10),
-                  Expanded(child: Text(u['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(u['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    Text(u['email'] ?? '', style: const TextStyle(color: Colors.grey, fontSize: 10), overflow: TextOverflow.ellipsis),
+                  ])),
                   Text('$calls/30', style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.bold)),
-                  Text(' (${(pct * 100).toInt()}%)', style: TextStyle(fontSize: 11, color: color)),
                   const SizedBox(width: 4),
                   const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 14),
                 ]),
@@ -212,11 +241,11 @@ class _AnalyticsTab extends StatelessWidget {
       ),
       const SizedBox(height: 14),
 
-      // Outcomes pie
+      // Outcomes
       if (outcomes.isNotEmpty) Container(padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: kBorder)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Call Outcomes Breakdown', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)),
+          const Text('Call Outcomes', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextMain)),
           const SizedBox(height: 14),
           Row(children: [
             SizedBox(height: 120, width: 120, child: PieChart(PieChartData(
@@ -244,8 +273,7 @@ class _AnalyticsTab extends StatelessWidget {
 }
 
 class _MiniCard extends StatelessWidget {
-  final String label, value;
-  final Color color;
+  final String label, value; final Color color;
   const _MiniCard(this.label, this.value, this.color);
   @override
   Widget build(BuildContext context) => Container(
