@@ -101,6 +101,7 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
 
   // Show options: schedule callback OR create new task with lead
   void _showCreateOptions() {
+    final isAdmin = context.read<AuthService>().user?.isAdmin ?? false;
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
@@ -123,6 +124,14 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
             subtitle: const Text('Assign a follow-up to a specific lead'),
             onTap: () { Navigator.pop(context); _showCreateWithLead(); },
           ),
+          if (isAdmin)
+            ListTile(
+              leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: kAmber.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(Icons.person_add_alt_1_rounded, color: kAmber)),
+              title: const Text('Assign Task to Caller', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Assign a follow-up task directly to a caller'),
+              onTap: () { Navigator.pop(context); _showScheduleCallback(assignToCaller: true); },
+            ),
           const SizedBox(height: 16),
         ]),
       ),
@@ -130,7 +139,7 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
   }
 
   // Fixed callback modal - no keyboard overlap
-  void _showScheduleCallback() {
+  void _showScheduleCallback({bool assignToCaller = false}) {
     final noteCtrl = TextEditingController();
     DateTime? scheduledAt;
     User? selectedCaller;
@@ -151,16 +160,16 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
           child: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Row(children: [
-                const Expanded(child: Text('Schedule Callback', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(assignToCaller ? 'Assign Task to Caller' : 'Schedule Callback', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
                 IconButton(icon: const Icon(Icons.close_rounded, color: Colors.grey), onPressed: () => Navigator.pop(ctx)),
               ]),
               const SizedBox(height: 12),
               if (isAdmin) ...[
-                const Text('Assign to Caller', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                Text(assignToCaller ? 'Assign to Caller *' : 'Assign to Caller', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                 const SizedBox(height: 6),
                 DropdownButtonFormField<User>(
                   value: selectedCaller,
-                  hint: const Text('Select Caller (defaults to yourself)'),
+                  hint: Text(assignToCaller ? 'Select Caller (Required)' : 'Select Caller (defaults to yourself)'),
                   items: _callers.map((c) => DropdownMenuItem<User>(value: c, child: Text(c.name))).toList(),
                   onChanged: (val) => setS(() => selectedCaller = val),
                   decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(10)),
@@ -205,8 +214,8 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
               const SizedBox(height: 16),
               ElevatedButton.icon(
                 icon: const Icon(Icons.check_rounded),
-                label: const Text('Create Callback'),
-                onPressed: scheduledAt == null ? null : () async {
+                label: Text(assignToCaller ? 'Assign Task' : 'Create Callback'),
+                onPressed: (scheduledAt == null || (assignToCaller && selectedCaller == null)) ? null : () async {
                   final auth = context.read<AuthService>();
                   final api = context.read<ApiService>();
                   await api.createFollowUp(auth, {
@@ -217,7 +226,10 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
                   if (ctx.mounted) Navigator.pop(ctx);
                   _load();
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Callback scheduled ✓'), backgroundColor: kGreen),
+                    SnackBar(
+                      content: Text(assignToCaller ? 'Task assigned to caller ✓' : 'Callback scheduled ✓'),
+                      backgroundColor: kGreen,
+                    ),
                   );
                 },
               ),

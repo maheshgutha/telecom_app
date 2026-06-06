@@ -184,14 +184,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             // Admin sections
             if (isAdmin && _adminData != null) ...[
-              _WeeklyTrend(thisWeek: _trendThis, lastWeek: _trendLast),
+              _AdminWeeklyTrend(adminData: _adminData!),
               const SizedBox(height: 14),
               _AdminCallerPanel(teamStatus: _teamStatus, teamCalls: _teamCalls, fmt: _fmt),
-              const SizedBox(height: 14),
-              // Campaign panel using SAME data as campaigns page
-              _AdminCampaignPanel(campaigns: _campaignPerf),
-              const SizedBox(height: 14),
-              _DailyVolumeChart(adminData: _adminData!),
               const SizedBox(height: 14),
               _OutcomesChart(adminData: _adminData!),
               const SizedBox(height: 14),
@@ -767,91 +762,222 @@ class _AdminCallerPanel extends StatelessWidget {
   );
 }
 
-// ── ADMIN CAMPAIGN PANEL — same as campaigns page ─────────────────────────────
-class _AdminCampaignPanel extends StatelessWidget {
-  final List<Map<String, dynamic>> campaigns;
-  const _AdminCampaignPanel({required this.campaigns});
-  @override
-  Widget build(BuildContext context) {
-    final valid = campaigns.where((c) => c['_id'] != null && c['name'] != null).toList();
-    if (valid.isEmpty) return const SizedBox();
-    return Container(padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: kBorder)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.campaign_rounded, color: kGreen, size: 18), SizedBox(width: 8),
-          Text('Campaign Performance (tap to view)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
-        ]),
-        const SizedBox(height: 12),
-        ...valid.take(5).map((c) {
-          final campaign = Campaign.fromJson(c);
-          final total = campaign.totalLeads;
-          final called = campaign.called;
-          final won = campaign.won;
-          final calledPct = campaign.progress;
-          final convPct = campaign.conversionPct;
-          return GestureDetector(
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CampaignDetailScreen(campaignId: c['_id'], campaignName: c['name'] ?? ''))),
-            child: Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFFAF9FF), borderRadius: BorderRadius.circular(8), border: Border.all(color: kBorder)),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(child: Text(c['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: kPurple))),
-                  Text('$convPct% won', style: const TextStyle(color: kGreen, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 4), const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 16),
-                ]),
-                const SizedBox(height: 3),
-                Text('$total leads · $called called · $won won', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                const SizedBox(height: 6),
-                // Progress: called/total
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    const Text('Progress', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                    Text('${(calledPct * 100).toInt()}%', style: const TextStyle(fontSize: 10, color: kPurple, fontWeight: FontWeight.bold)),
-                  ]),
-                  const SizedBox(height: 3),
-                  ClipRRect(borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(value: calledPct.clamp(0.0, 1.0), minHeight: 6,
-                          backgroundColor: Colors.grey.shade100, valueColor: const AlwaysStoppedAnimation<Color>(kPurple))),
-                ]),
-              ]),
-            ),
-          );
-        }),
-      ]),
-    );
-  }
-}
 
-// ── DAILY VOLUME ──────────────────────────────────────────────────────────────
-class _DailyVolumeChart extends StatelessWidget {
+
+// ── ADMIN WEEKLY TREND ────────────────────────────────────────────────────────
+class _AdminWeeklyTrend extends StatelessWidget {
   final Map<String, dynamic> adminData;
-  const _DailyVolumeChart({required this.adminData});
+  const _AdminWeeklyTrend({required this.adminData});
+
   @override
   Widget build(BuildContext context) {
     final vol = adminData['dailyVolume'] as List? ?? [];
     if (vol.isEmpty) return const SizedBox();
-    return Container(padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: kBorder)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Daily Call Volume (Last 7 Days)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: kTextMain)),
-        const SizedBox(height: 12),
-        SizedBox(height: 110, child: BarChart(BarChartData(
-          borderData: FlBorderData(show: false), gridData: const FlGridData(drawVerticalLine: false),
-          titlesData: FlTitlesData(
-            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true,
-              getTitlesWidget: (val, _) { final i = val.toInt(); if (i < 0 || i >= vol.length) return const SizedBox();
-                return Text((vol[i]['_id'] as String? ?? '').split('-').last, style: const TextStyle(fontSize: 9, color: Colors.grey)); },
-            )),
+
+    int totalCalls = 0;
+    int maxCalls = 0;
+    String peakDayLabel = '';
+    
+    for (final day in vol) {
+      final c = (day['count'] as num?)?.toInt() ?? 0;
+      totalCalls += c;
+      if (c > maxCalls) {
+        maxCalls = c;
+        final date = DateTime.tryParse(day['_id'] as String? ?? '');
+        peakDayLabel = date != null ? DateFormat('EEEE').format(date) : '';
+      }
+    }
+    
+    final avgCalls = vol.isNotEmpty ? (totalCalls / vol.length).toStringAsFixed(1) : '0';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: kTextMain.withOpacity(0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          )
+        ],
+        border: Border.all(color: kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: kPurple.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.bar_chart_rounded, color: kPurple, size: 20),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Weekly Dial Trend',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: kTextMain,
+                      ),
+                    ),
+                    Text(
+                      'Team call attempts over the last 7 days',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          barGroups: List.generate(vol.length, (i) => BarChartGroupData(x: i, barRods: [
-            BarChartRodData(toY: (vol[i]['count'] as num?)?.toDouble() ?? 0, color: kPurple, width: 16, borderRadius: const BorderRadius.vertical(top: Radius.circular(4))),
-          ])),
-        ))),
-      ]),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildMiniStat('Total Calls', '$totalCalls', kPurple),
+              _buildMiniStat('Daily Avg', avgCalls, kGreen),
+              _buildMiniStat('Peak Day', peakDayLabel.isEmpty ? '-' : peakDayLabel, kAmber),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 140,
+            child: BarChart(
+              BarChartData(
+                maxY: (maxCalls * 1.25).clamp(5, double.infinity).toDouble(),
+                barTouchData: BarTouchData(
+                  touchTooltipData: BarTouchTooltipData(
+                    tooltipBgColor: kTextMain.withOpacity(0.9),
+                    tooltipPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    tooltipRoundedRadius: 8,
+                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                      final day = vol[groupIndex];
+                      final dateStr = day['_id'] as String? ?? '';
+                      final date = DateTime.tryParse(dateStr);
+                      final formattedDate = date != null ? DateFormat('dd MMM').format(date) : dateStr;
+                      return BarTooltipItem(
+                        '$formattedDate\n',
+                        const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                        children: [
+                          TextSpan(
+                            text: '${rod.toY.toInt()} calls',
+                            style: const TextStyle(color: kPurpleLight, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                borderData: FlBorderData(show: false),
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: (maxCalls / 4).clamp(1, double.infinity),
+                  getDrawingHorizontalLine: (value) => FlLine(
+                    color: kBorder.withOpacity(0.5),
+                    strokeWidth: 1,
+                    dashArray: [5, 5],
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 24,
+                      getTitlesWidget: (val, _) {
+                        final i = val.toInt();
+                        if (i < 0 || i >= vol.length) return const SizedBox();
+                        final dateStr = vol[i]['_id'] as String? ?? '';
+                        final date = DateTime.tryParse(dateStr);
+                        final label = date != null ? DateFormat('E').format(date) : dateStr.split('-').last;
+                        
+                        final isToday = date != null &&
+                            date.year == DateTime.now().year &&
+                            date.month == DateTime.now().month &&
+                            date.day == DateTime.now().day;
+                            
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: isToday ? FontWeight.bold : FontWeight.w500,
+                              color: isToday ? kPurple : Colors.grey.shade500,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barGroups: List.generate(vol.length, (i) {
+                  final day = vol[i];
+                  final count = (day['count'] as num?)?.toDouble() ?? 0.0;
+                  final date = DateTime.tryParse(day['_id'] as String? ?? '');
+                  final isToday = date != null &&
+                      date.year == DateTime.now().year &&
+                      date.month == DateTime.now().month &&
+                      date.day == DateTime.now().day;
+
+                  return BarChartGroupData(
+                    x: i,
+                    barRods: [
+                      BarChartRodData(
+                        toY: count,
+                        gradient: LinearGradient(
+                          colors: isToday
+                              ? [kGreen, kGreen.withOpacity(0.7)]
+                              : [kPurple, kPurple.withOpacity(0.7)],
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                        ),
+                        width: 18,
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                      ),
+                    ],
+                  );
+                }),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniStat(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: color),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 }
