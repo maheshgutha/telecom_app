@@ -20,16 +20,29 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _idx = 0;
 
-  List<_NavItem> _navItems(bool isAdmin) => isAdmin ? [
+  // Admin/SuperAdmin: NO My Calls (admins don't make calls)
+  List<_NavItem> _adminNavItems() => [
     _NavItem(Icons.dashboard_rounded, Icons.dashboard_outlined, 'Dashboard'),
     _NavItem(Icons.people_rounded, Icons.people_outline, 'Leads'),
-    _NavItem(Icons.phone_rounded, Icons.phone_outlined, 'My Calls'),
     _NavItem(Icons.event_note_rounded, Icons.event_note_outlined, 'Tasks'),
     _NavItem(Icons.campaign_rounded, Icons.campaign_outlined, 'Campaigns'),
     _NavItem(Icons.bar_chart_rounded, Icons.bar_chart_outlined, 'Reports'),
     _NavItem(Icons.manage_accounts_rounded, Icons.manage_accounts_outlined, 'Users'),
     _NavItem(Icons.person_rounded, Icons.person_outline, 'Profile'),
-  ] : [
+  ];
+
+  List<Widget> _adminScreens() => [
+    const DashboardScreen(),
+    const LeadsScreen(),
+    const FollowUpsScreen(),
+    const CampaignsScreen(),
+    const ReportsScreen(),
+    const UsersScreen(),
+    const ProfileScreen(),
+  ];
+
+  // Caller: has My Calls
+  List<_NavItem> _callerNavItems() => [
     _NavItem(Icons.dashboard_rounded, Icons.dashboard_outlined, 'Dashboard'),
     _NavItem(Icons.people_rounded, Icons.people_outline, 'Leads'),
     _NavItem(Icons.phone_rounded, Icons.phone_outlined, 'My Calls'),
@@ -38,16 +51,7 @@ class _MainShellState extends State<MainShell> {
     _NavItem(Icons.person_rounded, Icons.person_outline, 'Profile'),
   ];
 
-  List<Widget> _screens(bool isAdmin) => isAdmin ? [
-    const DashboardScreen(),
-    const LeadsScreen(),
-    const MyCallsScreen(),
-    const FollowUpsScreen(),
-    const CampaignsScreen(),
-    const ReportsScreen(),
-    const UsersScreen(),
-    const ProfileScreen(),
-  ] : [
+  List<Widget> _callerScreens() => [
     const DashboardScreen(),
     const LeadsScreen(),
     const MyCallsScreen(),
@@ -60,8 +64,9 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final isAdmin = auth.user?.isAdmin ?? false;
-    final items = _navItems(isAdmin);
-    final screens = _screens(isAdmin);
+
+    final items = isAdmin ? _adminNavItems() : _callerNavItems();
+    final screens = isAdmin ? _adminScreens() : _callerScreens();
     final safeIdx = _idx.clamp(0, screens.length - 1);
 
     return Scaffold(
