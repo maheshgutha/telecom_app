@@ -26,11 +26,37 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
     final auth = context.read<AuthService>();
     final api = context.read<ApiService>();
     final data = await api.getCampaigns(auth);
-    // /api/campaigns returns statusBreakdown per campaign - Campaign.fromJson reads it
+    final rawCampaigns = (data['campaigns'] as List? ?? [])
+        .map((e) => Campaign.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+
+    final updatedCampaigns = await Future.wait(rawCampaigns.map((c) async {
+      try {
+        final leadsRes = await api.getCampaignLeads(auth, c.id);
+        final leads = (leadsRes['leads'] as List? ?? [])
+            .map((e) => Lead.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+        final total = leads.length;
+        final called = leads.where((l) => l.status != 'Fresh').length;
+        final won = leads.where((l) => l.status == 'Won').length;
+        return Campaign(
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          priority: c.priority,
+          totalLeads: total,
+          called: called,
+          won: won,
+          createdAt: c.createdAt,
+          assignedCallerNames: c.assignedCallerNames,
+        );
+      } catch (_) {
+        return c;
+      }
+    }));
+
     setState(() {
-      _campaigns = (data['campaigns'] as List? ?? [])
-          .map((e) => Campaign.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
+      _campaigns = updatedCampaigns;
       _loading = false;
     });
   }

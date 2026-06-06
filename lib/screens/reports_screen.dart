@@ -17,8 +17,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
   Map<String, dynamic>? _leaderboard;
   Map<String, dynamic>? _adminData;
   bool _loading = true;
-  // Default to 'week' so leaderboard always has data on load
-  String _period = 'week';
+  // Default to 'all' (maps to 'year' / all-time) so leaderboard always has data on load
+  String _period = 'all';
 
   @override
   void initState() { super.initState(); _tabs = TabController(length: 2, vsync: this); _load(); }
@@ -147,10 +147,10 @@ class _LeaderboardTab extends StatelessWidget {
           final user = c['user'] as Map? ?? {};
           final rank = i + 1;
           final medal = rank == 1 ? '🥇' : rank == 2 ? '🥈' : rank == 3 ? '🥉' : '#$rank';
-          final calls = c['totalCalls'] ?? 0;
-          final wins = c['sales'] ?? 0;
-          final dur = c['totalDuration'] ?? 0;
-          final mins = (dur as int) ~/ 60;
+          final calls = (c['totalCalls'] as num?)?.toInt() ?? 0;
+          final wins = (c['sales'] as num?)?.toInt() ?? 0;
+          final dur = (c['totalDuration'] as num?)?.toInt() ?? 0;
+          final mins = dur ~/ 60;
           final userId = user['_id'] as String?;
 
           return GestureDetector(

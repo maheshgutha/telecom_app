@@ -41,6 +41,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final r = await api.getLeadStats(auth);
         if (r['error'] != null) throw Exception(r['error']);
         _statsData = r;
+
+        final myCallsRes = await api.getMyCalls(auth);
+        if (myCallsRes['error'] == null) {
+          final leads = (myCallsRes['leads'] as List? ?? []).map((e) => Lead.fromJson(Map<String, dynamic>.from(e))).toList();
+          final today = DateTime.now();
+          int todayCount = 0;
+          int todaySecs = 0;
+          for (final l in leads) {
+            bool calledToday = false;
+            for (final a in l.activities) {
+              if (a.type == 'call') {
+                final ct = a.createdAt;
+                if (ct != null && ct.toLocal().year == today.year && ct.toLocal().month == today.month && ct.toLocal().day == today.day) {
+                  calledToday = true;
+                  todaySecs += a.callDuration ?? 0;
+                }
+              }
+            }
+            if (calledToday) {
+              todayCount++;
+            }
+          }
+          _statsData?['todayCalls'] = {
+            'count': todayCount,
+            'duration': todaySecs,
+          };
+        }
       }
     } catch (e) { _error = e.toString().replaceAll('Exception: ', ''); }
     setState(() => _loading = false);
@@ -58,9 +85,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> get _upcomingDemos =>
       List<Map<String, dynamic>>.from(_statsData?['upcomingDemos'] ?? []);
   List<int> get _trendThis => List<int>.from(
-      (_statsData?['trendThisWeek'] as List? ?? []).map((e) => (e as num).toInt()));
+      ((_adminData != null ? _adminData : _statsData)?['trendThisWeek'] as List? ?? []).map((e) => (e as num).toInt()));
   List<int> get _trendLast => List<int>.from(
-      (_statsData?['trendLastWeek'] as List? ?? []).map((e) => (e as num).toInt()));
+      ((_adminData != null ? _adminData : _statsData)?['trendLastWeek'] as List? ?? []).map((e) => (e as num).toInt()));
 
   // ── Admin getters from /reports/admin-analysis ────────────────────────────
   int get _teamCalls =>
@@ -157,6 +184,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             // Admin sections
             if (isAdmin && _adminData != null) ...[
+              _WeeklyTrend(thisWeek: _trendThis, lastWeek: _trendLast),
+              const SizedBox(height: 14),
               _AdminCallerPanel(teamStatus: _teamStatus, teamCalls: _teamCalls, fmt: _fmt),
               const SizedBox(height: 14),
               // Campaign panel using SAME data as campaigns page
@@ -195,11 +224,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             sub: 'all callers', onTap: () => _showTeamCallsSheet(context)),
         _KpiTile('Overdue F/U', '$_adminOverdue', Icons.warning_rounded, kRed,
             sub: 'across team',
-            onTap: _adminOverdue > 0 ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowUpsScreen(initialTab: 2))) : null),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowUpsScreen(initialTab: 2)))),
         _KpiTile('Unassigned', '$_unassigned', Icons.person_off_rounded, kAmber,
             sub: 'leads', onTap: () => _showUnassignedSheet(context)),
         _KpiTile('Revenue Won', '₹${_revenueWon > 0 ? _fmt2(_revenueWon) : '0'}', Icons.currency_rupee_rounded, kGreen,
-            sub: 'this month'),
+            sub: 'this month', onTap: () => _showRevenueBreakdownSheet(context)),
       ],
     );
   }
@@ -222,9 +251,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             sub: 'today', onTap: () => _showTalkTimeSheet(context)),
         _KpiTile('Overdue F/U', '$_callerOverdue', Icons.warning_rounded, kRed,
             sub: 'pending',
-            onTap: _callerOverdue > 0 ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowUpsScreen(initialTab: 2))) : null),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowUpsScreen(initialTab: 2)))),
         _KpiTile('Weekly Wins 🏆', '$_weeklyWins', Icons.emoji_events_rounded, kAmber,
-            sub: 'this week'),
+            sub: 'this week', onTap: () => _showWeeklyWinsSheet(context)),
       ],
     );
   }
@@ -284,6 +313,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (_) => DraggableScrollableSheet(expand: false, initialChildSize: 0.75, maxChildSize: 0.95,
         builder: (_, ctrl) => _TalkTimeSheet(api: api, auth: auth, ctrl: ctrl, totalSecs: _myTalkSecs, fmt: _fmt)));
   }
+
+  void _showWeeklyWinsSheet(BuildContext context) {
+    final api = context.read<ApiService>();
+    final auth = context.read<AuthService>();
+    showModalBottomSheet(context: context, isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => DraggableScrollableSheet(expand: false, initialChildSize: 0.75, maxChildSize: 0.95,
+        builder: (_, ctrl) => _WeeklyWinsSheet(api: api, auth: auth, ctrl: ctrl)));
+  }
+
+  void _showRevenueBreakdownSheet(BuildContext context) {
+    final api = context.read<ApiService>();
+    final auth = context.read<AuthService>();
+    showModalBottomSheet(context: context, isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => DraggableScrollableSheet(expand: false, initialChildSize: 0.75, maxChildSize: 0.95,
+        builder: (_, ctrl) => _RevenueBreakdownSheet(api: api, auth: auth, ctrl: ctrl, totalRevenue: _revenueWon)));
+  }
 }
 
 // ── SHEETS ────────────────────────────────────────────────────────────────────
@@ -341,8 +388,20 @@ class _MyCallsSheetState extends State<_MyCallsSheet> {
   @override void initState() { super.initState(); _load(); }
   Future<void> _load() async {
     final data = await widget.api.getMyCalls(widget.auth);
+    final today = DateTime.now();
+    final allLeads = (data['leads'] as List? ?? []).map((e) => Lead.fromJson(Map<String, dynamic>.from(e))).toList();
+    final todayLeads = allLeads.where((l) {
+      return l.activities.any((a) {
+        if (a.type != 'call') return false;
+        final ct = a.createdAt;
+        return ct != null &&
+            ct.toLocal().year == today.year &&
+            ct.toLocal().month == today.month &&
+            ct.toLocal().day == today.day;
+      });
+    }).toList();
     if (mounted) setState(() {
-      _leads = (data['leads'] as List? ?? []).map((e) => Lead.fromJson(Map<String, dynamic>.from(e))).toList();
+      _leads = todayLeads;
       _loading = false;
     });
   }
@@ -351,7 +410,7 @@ class _MyCallsSheetState extends State<_MyCallsSheet> {
     _Handle(),
     Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), child: Row(children: [
       const Expanded(child: Text("Today's Calls", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-      _Chip('${widget.count} calls', kPurple), const SizedBox(width: 8),
+      _Chip('${_leads.length} calls', kPurple), const SizedBox(width: 8),
       _Chip(widget.fmt(widget.secs), kGreen),
     ])),
     const Divider(height: 1),
@@ -725,13 +784,12 @@ class _AdminCampaignPanel extends StatelessWidget {
         ]),
         const SizedBox(height: 12),
         ...valid.take(5).map((c) {
-          final total = (c['totalLeads'] as int? ?? 0);
-          // Use same logic as campaigns page: called = non-Fresh, won = Won status
-          // campaignPerformance.called = leads where totalCalls > 0 (from backend)
-          final called = (c['called'] as int? ?? 0);
-          final won = (c['won'] as int? ?? 0);
-          final calledPct = total > 0 ? called / total : 0.0;
-          final convPct = total > 0 ? (won / total * 100).toInt() : 0;
+          final campaign = Campaign.fromJson(c);
+          final total = campaign.totalLeads;
+          final called = campaign.called;
+          final won = campaign.won;
+          final calledPct = campaign.progress;
+          final convPct = campaign.conversionPct;
           return GestureDetector(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CampaignDetailScreen(campaignId: c['_id'], campaignName: c['name'] ?? ''))),
             child: Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(10),
@@ -883,4 +941,86 @@ class _ErrWidget extends StatelessWidget {
     Text(error, style: const TextStyle(color: Colors.grey, fontSize: 12), textAlign: TextAlign.center),
     const SizedBox(height: 16), ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
   ]));
+}
+
+// ── WEEKLY WINS SHEET ──────────────────────────────────────────────────────────
+class _WeeklyWinsSheet extends StatefulWidget {
+  final ApiService api; final AuthService auth; final ScrollController ctrl;
+  const _WeeklyWinsSheet({required this.api, required this.auth, required this.ctrl});
+  @override State<_WeeklyWinsSheet> createState() => _WeeklyWinsSheetState();
+}
+class _WeeklyWinsSheetState extends State<_WeeklyWinsSheet> {
+  List<Lead> _leads = []; bool _loading = true;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    final data = await widget.api.getLeads(widget.auth, status: 'Won', limit: 100);
+    if (mounted) setState(() {
+      _leads = (data['leads'] as List? ?? []).map((e) => Lead.fromJson(Map<String, dynamic>.from(e))).toList();
+      _loading = false;
+    });
+  }
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    _Handle(),
+    _Header('Weekly Wins 🏆', '${_leads.length} won', kAmber),
+    const Divider(height: 1),
+    Expanded(child: _loading ? const Center(child: CircularProgressIndicator())
+      : _leads.isEmpty ? const Center(child: Text('No won leads yet', style: TextStyle(color: Colors.grey)))
+      : ListView.builder(controller: widget.ctrl, padding: const EdgeInsets.all(12), itemCount: _leads.length,
+          itemBuilder: (_, i) {
+            final l = _leads[i];
+            return ListTile(
+              leading: CircleAvatar(backgroundColor: kGreen.withOpacity(0.15),
+                  child: Text(l.name.isNotEmpty ? l.name[0].toUpperCase() : '?', style: const TextStyle(color: kGreen, fontWeight: FontWeight.bold))),
+              title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(l.phone),
+              trailing: StatusBadge(status: l.status),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => LeadDetailScreen(leadId: l.id))); },
+            );
+          })),
+  ]);
+}
+
+// ── REVENUE BREAKDOWN SHEET ────────────────────────────────────────────────────
+class _RevenueBreakdownSheet extends StatefulWidget {
+  final ApiService api; final AuthService auth; final ScrollController ctrl; final double totalRevenue;
+  const _RevenueBreakdownSheet({required this.api, required this.auth, required this.ctrl, required this.totalRevenue});
+  @override State<_RevenueBreakdownSheet> createState() => _RevenueBreakdownSheetState();
+}
+class _RevenueBreakdownSheetState extends State<_RevenueBreakdownSheet> {
+  List<Lead> _leads = []; bool _loading = true;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    final data = await widget.api.getLeads(widget.auth, status: 'Won', filter: 'all', limit: 100);
+    if (mounted) setState(() {
+      _leads = (data['leads'] as List? ?? []).map((e) => Lead.fromJson(Map<String, dynamic>.from(e))).toList();
+      _loading = false;
+    });
+  }
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    _Handle(),
+    _Header('Revenue Won Breakdown', '₹${widget.totalRevenue > 0 ? _fmt2(widget.totalRevenue) : '0'}', kGreen),
+    const Divider(height: 1),
+    Expanded(child: _loading ? const Center(child: CircularProgressIndicator())
+      : _leads.isEmpty ? const Center(child: Text('No revenue generated this month', style: TextStyle(color: Colors.grey)))
+      : ListView.builder(controller: widget.ctrl, padding: const EdgeInsets.all(12), itemCount: _leads.length,
+          itemBuilder: (_, i) {
+            final l = _leads[i];
+            final amt = l.budget ?? 0.0;
+            return ListTile(
+              leading: CircleAvatar(backgroundColor: kGreen.withOpacity(0.15),
+                  child: const Icon(Icons.currency_rupee_rounded, color: kGreen, size: 18)),
+              title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('Campaign: ${l.campaignName ?? 'None'} • Caller: ${l.assignedToName ?? 'Unassigned'}'),
+              trailing: Text('₹${amt > 0 ? _fmt2(amt) : '0'}', style: const TextStyle(fontWeight: FontWeight.bold, color: kGreen, fontSize: 16)),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => LeadDetailScreen(leadId: l.id))); },
+            );
+          })),
+  ]);
+  String _fmt2(double v) {
+    if (v >= 100000) return '${(v / 100000).toStringAsFixed(1)}L';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}K';
+    return v.toStringAsFixed(0);
+  }
 }

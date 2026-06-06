@@ -18,12 +18,24 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
   late TabController _tabs;
   List<FollowUp> _all = [], _today = [], _overdue = [];
   bool _loading = true;
+  List<User> _callers = [];
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 3, vsync: this, initialIndex: widget.initialTab.clamp(0, 2));
+    _loadCallers();
     _load();
+  }
+
+  Future<void> _loadCallers() async {
+    final auth = context.read<AuthService>();
+    final api = context.read<ApiService>();
+    if (auth.user?.isAdmin == true) {
+      final data = await api.getUsers(auth);
+      final users = (data['users'] as List? ?? []).map((u) => User.fromJson(Map<String, dynamic>.from(u))).toList();
+      if (mounted) setState(() => _callers = users.where((u) => u.role == 'caller').toList());
+    }
   }
   @override void dispose() { _tabs.dispose(); super.dispose(); }
 
@@ -121,6 +133,9 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
   void _showScheduleCallback() {
     final noteCtrl = TextEditingController();
     DateTime? scheduledAt;
+    User? selectedCaller;
+    final isAdmin = context.read<AuthService>().user?.isAdmin ?? false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -140,6 +155,18 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
                 IconButton(icon: const Icon(Icons.close_rounded, color: Colors.grey), onPressed: () => Navigator.pop(ctx)),
               ]),
               const SizedBox(height: 12),
+              if (isAdmin) ...[
+                const Text('Assign to Caller', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<User>(
+                  value: selectedCaller,
+                  hint: const Text('Select Caller (defaults to yourself)'),
+                  items: _callers.map((c) => DropdownMenuItem<User>(value: c, child: Text(c.name))).toList(),
+                  onChanged: (val) => setS(() => selectedCaller = val),
+                  decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(10)),
+                ),
+                const SizedBox(height: 14),
+              ],
               TextField(
                 controller: noteCtrl,
                 maxLines: 3,
@@ -185,6 +212,7 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
                   await api.createFollowUp(auth, {
                     'scheduledAt': scheduledAt!.toIso8601String(),
                     'note': noteCtrl.text.trim(),
+                    if (isAdmin && selectedCaller != null) 'assignedTo': selectedCaller!.id,
                   });
                   if (ctx.mounted) Navigator.pop(ctx);
                   _load();
@@ -206,6 +234,8 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
     DateTime? scheduledAt;
     Map<String, dynamic>? selectedLead;
     final searchCtrl = TextEditingController();
+    User? selectedCaller;
+    final isAdmin = context.read<AuthService>().user?.isAdmin ?? false;
 
     showModalBottomSheet(
       context: context,
@@ -238,6 +268,18 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       const SizedBox(height: 12),
+                      if (isAdmin) ...[
+                        const Text('Assign to Caller', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                        const SizedBox(height: 6),
+                        DropdownButtonFormField<User>(
+                          value: selectedCaller,
+                          hint: const Text('Select Caller (defaults to yourself)'),
+                          items: _callers.map((c) => DropdownMenuItem<User>(value: c, child: Text(c.name))).toList(),
+                          onChanged: (val) => setS(() => selectedCaller = val),
+                          decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.all(10)),
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                       // Lead search/select
                       if (selectedLead == null) ...[
                         const Text('Search Lead', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey)),
@@ -301,6 +343,7 @@ class _FollowUpsScreenState extends State<FollowUpsScreen> with SingleTickerProv
                             'lead': selectedLead!['_id'],
                             'scheduledAt': scheduledAt!.toIso8601String(),
                             'note': noteCtrl.text.trim(),
+                            if (isAdmin && selectedCaller != null) 'assignedTo': selectedCaller!.id,
                           });
                           if (ctx.mounted) Navigator.pop(ctx);
                           _load();
